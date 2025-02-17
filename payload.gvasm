@@ -1,0 +1,155 @@
+// include standard library for useful constants
+.stdlib
+
+.begin payload
+  .base 0x03000090
+
+  .arm
+  //Copy VidData from Storage sectors into end of EWRAM 
+  .def VidDataSize = 0x00012bA8
+  ldr r9,=(0x02040000-VidDataSize)
+  mov r4,#5
+--mov r1,#0
+- ldrb r0,[r10,r1]
+  strb r0,[ r9,r1]
+  add r1,#1
+  cmp r1,r2
+  blt -
+  add r10,r3
+  add r9,r2
+  sub r4,#1
+  cmp r4,#0
+  bgt --
+
+  //Call FLASH bankswap in emerald ROM to swap to FLASH bank 0.   
+  mov r0,#0
+  ldr lr,=returnFromSwap
+  ldr r1,=0x082e185d
+  bx r1
+returnFromSwap:
+
+  //Copy rest of VidData from saveSlot2 sectors...
+  ldr r10,=0x0E000000
+  mov r4,#14
+  ldr r2,=0x02040000
+- ldrb r0,[r10]
+  strb r0,[r9]
+  add r10,#1
+  add r9,#1
+  cmp r9,r2
+  blt -
+
+  // set REG_DISPCNT
+  ldr r0, =REG_DISPCNT
+  ldr r1, =0x0402
+  strh r1, [r0]
+
+  ldr r0,=REG_BG2CNT
+  ldr r1,=0x4004
+  strh r1,[r0]
+
+  ldr r1,=0x0100
+  ldr r0,=REG_BG2PA
+  strh r1,[r0]
+  ldr r0,=REG_BG2PD
+  strh r1,[r0]
+  mov r1,#0
+  ldr r0,=REG_BG2PB
+  strh r1,[r0]
+  ldr r0,=REG_BG2PC
+  strh r1,[r0]
+  ldr r0,=REG_DISPSTAT
+  strh r1,[r0]
+  // set colors
+  ldr r0, =0x05000000
+  ldr r1, =rgb(0, 0, 0) //Black
+  strh r1, [r0]
+  add r0,#2
+  ldr r1, =rgb(31,31,31) //White
+  strh r1,[r0]
+
+
+  //Init bgTiles
+  ldr r0,=imdata
+  ldr r1,=0x06004000
+  ldr r2,=bitpack
+  add ip, pc,#1
+  bx ip
+  .thumb
+  swi 0x10 //Call BitUnPack in BIOS
+  .align 4, nop
+  bx pc
+  nop
+  .arm
+
+  //Decompress VidData in wRAM
+  ldr r0,=(0x02040000-VidDataSize)
+  ldr r1,=0x02000000
+  add ip, pc,#1
+  bx ip
+  .thumb
+  swi 0x11 //Call LZ77UnCompWRAM in BIOS
+  .align 4, nop
+  bx pc
+  nop
+  .arm
+
+  //Erase Background2 data
+  ldr r10,= 0x06000000
+  ldr r2, = 0x00000400
+  mov r0,#0
+  mov r1,#0
+- strh r0,[r10,r1]
+  add r1,#2
+  cmp r1,r2
+  blt -
+
+
+  //Copy frameData from wRAM into VRAM one frame at a time
+  ldr r10, = 0x06000084
+  ldr r11, = 0x02000000
+  ldr r5, =  0x00039BE7 //Size of uncompressed vidData
+  ldr r6, = 0x04000006
+  mov r1,#0
+  DrawFrame:
+    mov  r3,#18
+    mov  r4,#0
+    - ldrh r2,[r11,r1]
+      strh r2,[r10,r4]
+      add  r4,#2 
+      add  r1,#2
+      cmp  r4,r3
+      blt  -
+      add  r3,#32
+      add  r4,#14
+      cmp  r3,#384
+    blt  -
+    cmp r1,r5
+    blt +
+      mov r1,#0
+    + mov r8, #12 //Number of frames to wait before next frame...
+    wait1:
+      ldrh r7, [r6]
+	    cmp r7, #161         // wait for vblank.
+      bne wait1
+      - ldrh r7,[r6]   
+        cmp r7, #161
+        beq -             //wait for not vblank
+      sub r8,#1
+      cmp r8,#0
+      bne wait1
+  b DrawFrame
+  .pool
+
+  .align 8
+  bitpack:
+  .u16 (imdataEND-imdata) //Len of bitpacked data
+  .u8 0x01 //Source Width
+  .u8 0x08 //Dest Width
+  .u32 0x0 //Data offset
+
+  .align 4
+  imdata:
+  .embed 'Data/KeyTiles.bin'
+  imdataEND:
+.end
